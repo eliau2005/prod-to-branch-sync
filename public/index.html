@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Branch data sync · Supabase</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Apply saved theme before paint to avoid a flash (default: light).
+    if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: 'var(--bg)', card: 'var(--card)', bar: 'var(--bar)', input: 'var(--input)',
+            line: 'var(--line)', 'line-h': 'var(--line-h)',
+            fg: 'var(--fg)', muted: 'var(--muted)', dim: 'var(--dim)',
+            brand: { DEFAULT: '#3ECF8E', hover: '#34b27b' },
+          },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* Light — Supabase dashboard */
+    :root {
+      --page: #fbfbfb; --bg: #ffffff; --card: #ffffff; --bar: #ffffff; --input: #ffffff;
+      --line: #e6e6e6; --line-h: #d4d4d4;
+      --fg: #171717; --muted: #6b7280; --dim: #8f8f8f;
+    }
+    /* Dark — Supabase studio */
+    .dark {
+      --page: #1c1c1c; --bg: #1c1c1c; --card: #1f1f1f; --bar: #171717; --input: #2a2a2a;
+      --line: #2e2e2e; --line-h: #3e3e3e;
+      --fg: #ededed; --muted: #a0a0a0; --dim: #707070;
+    }
+    body { font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; background: var(--page); }
+  </style>
+</head>
+<body class="text-fg min-h-screen antialiased">
+
+  <!-- Top bar -->
+  <header class="sticky top-0 z-20 border-b border-line bg-bar/95 backdrop-blur">
+    <div class="max-w-3xl mx-auto px-5 h-14 flex items-center gap-3">
+      <svg width="22" height="22" viewBox="0 0 109 113" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M63.7 110.3c-2.8 3.5-8.5 1.6-8.6-2.9L53.8 41h44.3c8 0 12.5 9.3 7.5 15.6l-41.9 53.7z" fill="#3ECF8E"/>
+        <path d="M63.7 110.3c-2.8 3.5-8.5 1.6-8.6-2.9L53.8 41h44.3c8 0 12.5 9.3 7.5 15.6l-41.9 53.7z" fill="url(#sbg)" fill-opacity="0.2"/>
+        <path d="M45.3 2.4c2.8-3.5 8.5-1.6 8.6 2.9l.6 66.4H10.8c-8 0-12.5-9.3-7.5-15.6L45.3 2.4z" fill="#3ECF8E"/>
+        <defs><linearGradient id="sbg" x1="53.97" y1="54.97" x2="94.16" y2="71.8" gradientUnits="userSpaceOnUse"><stop/><stop offset="1" stop-opacity="0"/></linearGradient></defs>
+      </svg>
+      <span class="text-[15px] font-semibold text-fg tracking-tight">Supabase</span>
+      <span class="text-dim">/</span>
+      <span class="text-[14px] text-muted">Branch data sync</span>
+      <button id="theme-toggle" title="Toggle theme" aria-label="Toggle theme"
+        class="ml-auto rounded-md border border-line bg-bg w-9 h-9 grid place-items-center text-muted hover:text-fg hover:border-line-h transition-colors">
+        <span id="theme-icon" class="grid place-items-center"></span>
+      </button>
+    </div>
+    <!-- Tabs -->
+    <nav class="max-w-3xl mx-auto px-5 flex gap-6">
+      <button data-tab="home" class="tab -mb-px border-b-2 py-2.5 text-sm transition-colors">Overview</button>
+      <button data-tab="settings" class="tab -mb-px border-b-2 py-2.5 text-sm transition-colors">Settings</button>
+    </nav>
+  </header>
+
+  <div class="max-w-3xl mx-auto px-5 py-8">
+
+    <!-- Shared: config problems -->
+    <div id="problems" class="hidden mb-5 rounded-md border px-4 py-3 text-sm border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/[0.08] dark:text-red-300"></div>
+
+    <!-- ============================ HOME / OVERVIEW ============================ -->
+    <section id="tab-home">
+      <header class="mb-6">
+        <h1 class="text-xl font-semibold text-fg tracking-tight">Prod → Branch data sync</h1>
+        <p class="text-sm text-muted mt-1">
+          Copy <span class="text-fg">production</span> data (public schema + auth logins) into a Supabase preview branch.
+        </p>
+      </header>
+
+      <!-- Production overview -->
+      <section class="rounded-md border border-line bg-card mb-5 overflow-hidden">
+        <div class="px-5 py-3 border-b border-line flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-fg">Production</h2>
+          <span id="ov-token-pill" class="text-xs rounded-full px-2 py-0.5 border border-line text-muted">—</span>
+        </div>
+        <dl class="divide-y divide-line text-sm">
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">Project ref</dt><dd id="ov-ref" class="font-mono text-fg break-all">—</dd></div>
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">Pooler host</dt><dd id="ov-host" class="font-mono text-fg break-all">—</dd></div>
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">Database user</dt><dd id="ov-user" class="font-mono text-fg break-all">—</dd></div>
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">Database</dt><dd id="ov-db" class="font-mono text-fg break-all">—</dd></div>
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">Access token</dt><dd id="ov-token" class="text-fg">—</dd></div>
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">psql tools</dt><dd id="ov-pgbin" class="font-mono text-fg break-all">—</dd></div>
+          <div class="flex items-center gap-4 px-5 py-2.5"><dt class="w-40 shrink-0 text-muted">Preview branches</dt><dd id="ov-branches" class="text-fg">—</dd></div>
+        </dl>
+      </section>
+
+      <div class="mb-5 rounded-md border px-3 py-2 text-xs border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/[0.07] dark:text-amber-300/90">
+        ⚠️ Local tool. Reads production <b class="font-semibold">read-only</b> and <b class="font-semibold">wipes the selected branch</b>. Never expose this server. Storage file bytes are not copied; branches are ephemeral.
+      </div>
+
+      <!-- Controls -->
+      <section class="rounded-md border border-line bg-card p-5 mb-5">
+        <label class="block text-sm font-medium text-fg mb-2">Target preview branch</label>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div id="branch-dd" class="relative flex-1">
+            <select id="branch" class="sr-only" tabindex="-1" aria-hidden="true"><option value="">Loading branches…</option></select>
+            <button id="branch-trigger" type="button" aria-haspopup="listbox"
+              class="w-full flex items-center justify-between gap-2 rounded-md bg-input border border-line px-3 py-2 text-sm text-fg text-left hover:border-line-h focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-colors">
+              <span id="branch-label" class="truncate text-dim">Loading branches…</span>
+              <svg class="shrink-0 text-muted" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div id="branch-menu" class="hidden absolute z-10 mt-1 w-full max-h-72 overflow-auto rounded-md border border-line bg-card p-1 shadow-lg shadow-black/20"></div>
+          </div>
+          <button id="refresh" title="Refresh branches" class="rounded-md border border-line bg-input px-3 py-2 text-sm text-muted hover:text-fg hover:border-line-h transition-colors">↻</button>
+          <button id="run" disabled class="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-neutral-900 hover:bg-brand-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            Copy production → branch
+          </button>
+        </div>
+        <p id="prodref" class="text-xs text-muted mt-2"></p>
+      </section>
+
+      <!-- Steps -->
+      <div id="steps" class="hidden flex items-center gap-2 text-xs mb-3">
+        <span data-step="dump" class="step rounded-full px-3 py-1 border border-line text-muted">1 · Dump</span>
+        <span class="text-dim">→</span>
+        <span data-step="restore" class="step rounded-full px-3 py-1 border border-line text-muted">2 · Restore</span>
+        <span class="text-dim">→</span>
+        <span data-step="verify" class="step rounded-full px-3 py-1 border border-line text-muted">3 · Verify</span>
+      </div>
+
+      <!-- Result -->
+      <div id="result" class="hidden mb-5"></div>
+
+      <!-- Log -->
+      <pre id="log" class="hidden rounded-md border border-line bg-bar text-xs leading-relaxed text-muted p-4 overflow-auto max-h-96 whitespace-pre-wrap font-mono"></pre>
+    </section>
+
+    <!-- ============================ SETTINGS ============================ -->
+    <section id="tab-settings" class="hidden">
+      <header class="mb-6">
+        <h1 class="text-xl font-semibold text-fg tracking-tight">Settings</h1>
+        <p class="text-sm text-muted mt-1">Manage the access token, production connection, and client tools. All values are saved to <code class="text-fg/80">.env</code> locally.</p>
+      </header>
+
+      <!-- Access token -->
+      <section id="token-card" class="rounded-md border border-line bg-card p-5 mb-5">
+        <div class="flex items-center justify-between">
+          <label class="block text-sm font-medium text-fg">Supabase access token</label>
+          <a href="https://supabase.com/dashboard/account/tokens" target="_blank" class="text-xs text-brand hover:text-brand-hover hover:underline">Create one ↗</a>
+        </div>
+        <p class="text-xs text-muted mt-1">Account-wide token, used to list branches and fetch branch DB passwords.</p>
+        <div class="flex flex-col sm:flex-row gap-3 mt-3">
+          <input id="token" type="password" placeholder="sbp_…" autocomplete="off"
+            class="flex-1 rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40" />
+          <button id="save-token" class="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-neutral-900 hover:bg-brand-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Save token</button>
+        </div>
+        <p id="token-status" class="hidden text-xs mt-2"></p>
+      </section>
+
+      <!-- PostgreSQL client tools -->
+      <section class="rounded-md border border-line bg-card p-5 mb-5">
+        <label class="block text-sm font-medium text-fg">PostgreSQL client tools</label>
+        <p class="text-xs text-muted mt-1">Directory containing <code class="text-fg/80">psql</code> / <code class="text-fg/80">pg_dump</code>. Leave blank to use the system <code class="text-fg/80">PATH</code>. Verified with <code class="text-fg/80">psql --version</code> before saving.</p>
+        <div class="flex flex-col sm:flex-row gap-3 mt-3">
+          <input id="pg-bin" type="text" autocomplete="off" spellcheck="false" placeholder="(system PATH)  ·  e.g. C:\Program Files\PostgreSQL\16\bin"
+            class="flex-1 rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40" />
+          <button id="pg-bin-save" class="rounded-md border border-line bg-input px-4 py-2 text-sm font-medium text-fg hover:border-line-h disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Save &amp; test</button>
+        </div>
+        <p id="pg-bin-status" class="hidden text-xs mt-2"></p>
+      </section>
+
+      <!-- Danger Zone: production connection -->
+      <section class="rounded-md border border-red-500/40 bg-card overflow-hidden">
+        <div class="px-5 py-3 border-b border-red-500/30 bg-red-500/[0.06]">
+          <h2 class="text-sm font-semibold text-red-600 dark:text-red-400">Danger Zone — production connection</h2>
+          <p class="text-xs text-muted mt-0.5">Repoint this tool at a different production database.</p>
+        </div>
+        <div class="p-5">
+          <p class="text-xs text-muted mb-1">Current production target</p>
+          <p id="prod-current" class="text-sm font-mono text-fg break-all">—</p>
+          <label class="block text-sm font-medium text-fg mt-4 mb-2">New production connection URL</label>
+          <input id="prod-url" type="text" autocomplete="off" spellcheck="false"
+            placeholder="postgresql://postgres.&lt;ref&gt;:&lt;password&gt;@&lt;pooler-host&gt;:5432/postgres"
+            class="w-full rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40" />
+          <p class="text-xs text-muted mt-1">Use the <b class="font-medium text-fg">session-pooler</b> URL (user <code class="text-fg/80">postgres.&lt;ref&gt;</code>). Tested read-only before saving.</p>
+          <div class="flex items-center gap-3 mt-3">
+            <button id="prod-save" class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Update production connection</button>
+            <p id="prod-status" class="hidden text-xs"></p>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <footer class="mt-8 pt-4 border-t border-line text-[11px] text-dim">Local tool · binds 127.0.0.1 · never deploy</footer>
+  </div>
+
+  <!-- Confirmation modal (wipe & copy) -->
+  <div id="modal" class="hidden fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-30">
+    <div class="max-w-md w-full rounded-md border border-line bg-card p-5 shadow-2xl">
+      <h2 class="text-base font-semibold text-fg">Confirm destructive copy</h2>
+      <p id="modal-body" class="text-sm text-muted mt-2 leading-relaxed"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button id="cancel" class="rounded-md border border-line px-3 py-2 text-sm text-muted hover:text-fg hover:bg-input transition-colors">Cancel</button>
+        <button id="confirm" class="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 transition-colors">Wipe &amp; copy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation modal (repoint production) -->
+  <div id="prod-modal" class="hidden fixed inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-30">
+    <div class="max-w-md w-full rounded-md border border-line bg-card p-5 shadow-2xl">
+      <h2 class="text-base font-semibold text-fg">Repoint production?</h2>
+      <p class="text-sm text-muted mt-2 leading-relaxed">This changes which <b class="text-fg">production database</b> the tool reads from. The new connection is tested read-only, then saved to <code class="text-fg/80">.env</code>. Continue?</p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button id="prod-cancel" class="rounded-md border border-line px-3 py-2 text-sm text-muted hover:text-fg hover:bg-input transition-colors">Cancel</button>
+        <button id="prod-confirm" class="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 transition-colors">Test &amp; update</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const branchSel = $('#branch'), runBtn = $('#run'), refreshBtn = $('#refresh');
+    const logEl = $('#log'), stepsEl = $('#steps'), resultEl = $('#result'), problemsEl = $('#problems');
+    const modal = $('#modal'), modalBody = $('#modal-body');
+    const tokenInput = $('#token'), saveTokenBtn = $('#save-token'), tokenStatus = $('#token-status');
+    const prodCurrent = $('#prod-current'), prodUrlInput = $('#prod-url'), prodSaveBtn = $('#prod-save'), prodStatus = $('#prod-status'), prodModal = $('#prod-modal');
+    const pgBinInput = $('#pg-bin'), pgBinSaveBtn = $('#pg-bin-save'), pgBinStatus = $('#pg-bin-status');
+    const branchDD = $('#branch-dd'), branchTrigger = $('#branch-trigger'), branchLabel = $('#branch-label'), branchMenu = $('#branch-menu');
+    let branches = [];
+
+    // ---- Tabs ----
+    function setTab(name) {
+      $('#tab-home').classList.toggle('hidden', name !== 'home');
+      $('#tab-settings').classList.toggle('hidden', name !== 'settings');
+      document.querySelectorAll('.tab').forEach((t) => {
+        const active = t.dataset.tab === name;
+        t.className = 'tab -mb-px border-b-2 py-2.5 text-sm transition-colors ' +
+          (active ? 'border-brand text-fg font-medium' : 'border-transparent text-muted hover:text-fg');
+      });
+    }
+    document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => setTab(t.dataset.tab)));
+
+    // ---- Theme toggle ----
+    const themeIcon = $('#theme-icon');
+    const SUN_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+    const MOON_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+    // Show the icon for the theme you'll switch TO: sun while dark, moon while light.
+    function syncThemeIcon() { themeIcon.innerHTML = document.documentElement.classList.contains('dark') ? SUN_ICON : MOON_ICON; }
+    syncThemeIcon();
+    $('#theme-toggle').addEventListener('click', () => {
+      const dark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', dark ? 'dark' : 'light');
+      syncThemeIcon();
+    });
+
+    // ---- Custom Supabase-style dropdown (mirrors the hidden <select id="branch">) ----
+    function closeBranchMenu() { branchMenu.classList.add('hidden'); }
+    function openBranchMenu() { if (!branchSel.disabled) branchMenu.classList.remove('hidden'); }
+    function refreshBranchUI() {
+      const sel = branchSel.options[branchSel.selectedIndex];
+      branchLabel.textContent = sel ? sel.text : '— select a branch —';
+      branchLabel.classList.toggle('text-dim', !branchSel.value);
+      branchLabel.classList.toggle('text-fg', !!branchSel.value);
+      branchTrigger.disabled = branchSel.disabled;
+      branchTrigger.classList.toggle('opacity-50', branchSel.disabled);
+      branchTrigger.classList.toggle('cursor-not-allowed', branchSel.disabled);
+      branchMenu.innerHTML = '';
+      Array.from(branchSel.options).forEach((opt) => {
+        const row = document.createElement('div');
+        const selected = opt.selected && opt.value !== '';
+        const base = 'flex items-center gap-2 rounded px-2.5 py-1.5 text-sm ';
+        if (opt.disabled) {
+          row.className = base + 'text-dim cursor-not-allowed';
+        } else {
+          row.className = base + 'cursor-pointer hover:bg-input ' + (selected ? 'text-brand' : 'text-fg');
+          row.addEventListener('click', () => {
+            branchSel.value = opt.value;
+            branchSel.dispatchEvent(new Event('change'));
+            closeBranchMenu();
+            refreshBranchUI();
+          });
+        }
+        const check = document.createElement('span');
+        check.className = 'w-4 shrink-0 text-brand';
+        check.textContent = selected ? '✓' : '';
+        const text = document.createElement('span');
+        text.className = 'truncate';
+        text.textContent = opt.text;
+        row.append(check, text);
+        branchMenu.appendChild(row);
+      });
+    }
+    branchTrigger.addEventListener('click', () => { branchMenu.classList.contains('hidden') ? openBranchMenu() : closeBranchMenu(); });
+    document.addEventListener('click', (e) => { if (!branchDD.contains(e.target)) closeBranchMenu(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeBranchMenu(); });
+
+    // ---- Settings: access token ----
+    function setTokenStatus(msg, ok) {
+      tokenStatus.textContent = msg;
+      tokenStatus.className = 'text-xs mt-2 ' + (ok ? 'text-brand' : 'text-amber-600 dark:text-amber-400');
+      tokenStatus.classList.remove('hidden');
+    }
+    saveTokenBtn.addEventListener('click', async () => {
+      const token = tokenInput.value.trim();
+      if (!token) { setTokenStatus('Enter a token first.', false); return; }
+      saveTokenBtn.disabled = true; setTokenStatus('Validating…', true);
+      try {
+        const res = await fetch('/api/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        setTokenStatus('Saved ✓', true);
+        tokenInput.value = '';
+        problemsEl.classList.add('hidden');
+        await loadConfig();
+        await loadBranches();
+      } catch (e) {
+        setTokenStatus(String(e.message || e), false);
+      } finally {
+        saveTokenBtn.disabled = false;
+      }
+    });
+    tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveTokenBtn.click(); });
+
+    // ---- Settings: PG_BIN ----
+    function setPgBinStatus(msg, kind) {
+      pgBinStatus.textContent = msg;
+      pgBinStatus.className = 'text-xs mt-2 ' + (kind === 'ok' ? 'text-brand' : kind === 'err' ? 'text-red-600 dark:text-red-400' : 'text-muted');
+      pgBinStatus.classList.remove('hidden');
+    }
+    pgBinSaveBtn.addEventListener('click', async () => {
+      pgBinSaveBtn.disabled = true; setPgBinStatus('Testing psql…', 'info');
+      try {
+        const res = await fetch('/api/pg-bin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pgBin: pgBinInput.value.trim() }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        setPgBinStatus('Saved ✓ — ' + (data.version || 'psql found'), 'ok');
+        await loadConfig();
+      } catch (e) {
+        setPgBinStatus(String(e.message || e), 'err');
+      } finally {
+        pgBinSaveBtn.disabled = false;
+      }
+    });
+
+    // ---- Settings: Danger Zone (repoint production) ----
+    function setProdStatus(msg, kind) {
+      prodStatus.textContent = msg;
+      prodStatus.className = 'text-xs ' + (kind === 'ok' ? 'text-brand' : kind === 'err' ? 'text-red-600 dark:text-red-400' : 'text-muted');
+      prodStatus.classList.remove('hidden');
+    }
+    prodSaveBtn.addEventListener('click', () => {
+      if (!prodUrlInput.value.trim()) { setProdStatus('Enter a connection URL first.', 'err'); return; }
+      prodModal.classList.remove('hidden');
+    });
+    $('#prod-cancel').addEventListener('click', () => prodModal.classList.add('hidden'));
+    $('#prod-confirm').addEventListener('click', async () => {
+      prodModal.classList.add('hidden');
+      const url = prodUrlInput.value.trim();
+      prodSaveBtn.disabled = true; setProdStatus('Testing connection…', 'info');
+      try {
+        const res = await fetch('/api/prod-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        setProdStatus('Updated ✓ — connection verified.', 'ok');
+        prodUrlInput.value = '';
+        problemsEl.classList.add('hidden');
+        await loadConfig();
+        await loadBranches();
+      } catch (e) {
+        setProdStatus(String(e.message || e), 'err');
+      } finally {
+        prodSaveBtn.disabled = false;
+      }
+    });
+
+    function logLine(msg, isErr) {
+      logEl.classList.remove('hidden');
+      const span = document.createElement('span');
+      span.textContent = msg + '\n';
+      if (isErr) span.className = 'text-amber-600 dark:text-amber-400';
+      logEl.appendChild(span);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    function setStep(step, state) {
+      document.querySelectorAll('.step').forEach((el) => {
+        if (el.dataset.step !== step) return;
+        el.className = 'step rounded-full px-3 py-1 border ' + (
+          state === 'active' ? 'border-brand text-brand bg-brand/10'
+          : state === 'done' ? 'border-brand/40 text-brand'
+          : 'border-line text-muted');
+      });
+    }
+
+    // ---- Production overview (Home) ----
+    function loadConfig() {
+      return fetch('/api/config').then((r) => r.json()).then((c) => {
+        const dash = '—';
+        $('#ov-ref').textContent = c.prodRef || dash;
+        $('#ov-host').textContent = c.prodHost ? c.prodHost + (c.prodPort ? ':' + c.prodPort : '') : dash;
+        $('#ov-user').textContent = c.prodUser || dash;
+        $('#ov-db').textContent = c.prodDatabase || dash;
+        $('#ov-pgbin').textContent = c.pgBin || 'system PATH';
+        const tokenSet = !!c.hasToken;
+        $('#ov-token').innerHTML = tokenSet
+          ? '<span class="text-brand">●</span> Connected'
+          : '<span class="text-red-500">●</span> Not set';
+        const pill = $('#ov-token-pill');
+        pill.textContent = tokenSet ? 'Ready' : 'Token required';
+        pill.className = 'text-xs rounded-full px-2 py-0.5 border ' +
+          (tokenSet ? 'border-brand/40 text-brand' : 'border-red-500/40 text-red-600 dark:text-red-400');
+        prodCurrent.textContent = c.prodConfigured
+          ? c.prodUser + ' @ ' + c.prodHost + ' / ' + c.prodDatabase + (c.prodRef ? '  ·  ref ' + c.prodRef : '')
+          : 'Not configured';
+        pgBinInput.value = c.pgBin || '';
+        const other = (c.problems || []).filter((p) => !/ACCESS_TOKEN/.test(p));
+        if (other.length) showProblem('Setup needed: ' + other.join('; '));
+        return c;
+      });
+    }
+
+    async function loadBranches() {
+      branchSel.innerHTML = '<option value="">Loading branches…</option>';
+      runBtn.disabled = true;
+      refreshBranchUI();
+      try {
+        const res = await fetch('/api/branches');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        $('#prodref').textContent = 'Production project: ' + data.prodRef;
+        branches = data.branches || [];
+        const selectable = branches.filter((b) => !b.is_default);
+        $('#ov-branches').textContent = selectable.length + (selectable.length === 1 ? ' branch' : ' branches');
+        branchSel.innerHTML = '';
+        if (!selectable.length) {
+          branchSel.innerHTML = '<option value="">No preview branches found</option>';
+          refreshBranchUI();
+          return;
+        }
+        branchSel.appendChild(new Option('— select a branch —', ''));
+        for (const b of selectable) {
+          const bits = [b.name];
+          if (b.pr_number) bits.push('PR #' + b.pr_number);
+          bits.push(b.status);
+          if (b.persistent) bits.push('persistent');
+          branchSel.appendChild(new Option(bits.join(' · '), b.project_ref));
+        }
+        const main = branches.find((b) => b.is_default);
+        if (main) { const o = new Option(main.name + ' (production — blocked)', ''); o.disabled = true; branchSel.appendChild(o); }
+        refreshBranchUI();
+      } catch (e) {
+        showProblem(String(e.message || e));
+        $('#ov-branches').textContent = '—';
+        branchSel.innerHTML = '<option value="">Failed to load</option>';
+        refreshBranchUI();
+      }
+    }
+    function showProblem(msg) { problemsEl.textContent = msg; problemsEl.classList.remove('hidden'); }
+
+    branchSel.addEventListener('change', () => { runBtn.disabled = !branchSel.value; });
+    refreshBtn.addEventListener('click', loadBranches);
+
+    runBtn.addEventListener('click', () => {
+      const ref = branchSel.value;
+      const label = branchSel.options[branchSel.selectedIndex].text;
+      if (!ref) return;
+      modalBody.innerHTML = 'This will <b class="text-fg">permanently wipe all data</b> in <span class="text-fg">' +
+        label + '</span> and replace it with a copy of <b class="text-fg">production</b> (public schema + auth logins). Production is only read. Continue?';
+      modal.classList.remove('hidden');
+    });
+    $('#cancel').addEventListener('click', () => modal.classList.add('hidden'));
+    $('#confirm').addEventListener('click', () => { modal.classList.add('hidden'); startSync(branchSel.value); });
+
+    function startSync(ref) {
+      runBtn.disabled = true; refreshBtn.disabled = true; branchSel.disabled = true; refreshBranchUI();
+      logEl.textContent = ''; logEl.classList.remove('hidden');
+      resultEl.classList.add('hidden'); resultEl.innerHTML = '';
+      stepsEl.classList.remove('hidden');
+      ['dump', 'restore', 'verify'].forEach((s) => setStep(s, 'idle'));
+
+      const es = new EventSource('/api/sync?branchRef=' + encodeURIComponent(ref));
+      const stepOrder = { dump: ['dump'], restore: ['dump', 'restore'], verify: ['dump', 'restore', 'verify'] };
+      es.addEventListener('log', (e) => { const d = JSON.parse(e.data); logLine(d.msg, d.err); });
+      es.addEventListener('step', (e) => {
+        const cur = JSON.parse(e.data).step;
+        (stepOrder[cur] || []).forEach((s) => setStep(s, s === cur ? 'active' : 'done'));
+      });
+      es.addEventListener('result', (e) => renderResult(JSON.parse(e.data)));
+      es.addEventListener('fatal', (e) => { logLine('FATAL: ' + JSON.parse(e.data).error, true); });
+      es.addEventListener('done', () => {
+        es.close();
+        runBtn.disabled = !branchSel.value; refreshBtn.disabled = false; branchSel.disabled = false; refreshBranchUI();
+        ['verify'].forEach((s) => setStep(s, 'done'));
+      });
+      es.onerror = () => { /* connection closed by server after done */ };
+    }
+
+    function renderResult(d) {
+      ['dump', 'restore', 'verify'].forEach((s) => setStep(s, 'done'));
+      const rows = d.rows.map((r) => {
+        const ok = r.prod === r.branch;
+        return '<tr class="' + (ok ? 'text-fg' : 'text-red-600 dark:text-red-300') + ' border-t border-line">' +
+          '<td class="py-1.5 pr-4 font-mono">' + r.table + '</td>' +
+          '<td class="py-1.5 pr-4 text-right tabular-nums">' + (r.prod ?? '—') + '</td>' +
+          '<td class="py-1.5 pr-4 text-right tabular-nums">' + (r.branch ?? '—') + '</td>' +
+          '<td class="py-1.5">' + (ok ? '<span class="text-brand">✓</span>' : '<span class="text-red-500">✗</span>') + '</td></tr>';
+      }).join('');
+      const banner = d.pass
+        ? '<div class="rounded-md bg-brand/10 border border-brand/30 text-brand px-4 py-2 text-sm font-medium">✅ PASS — ' + d.branch + ' matches production (orphan profiles: ' + d.orphans + ')</div>'
+        : '<div class="rounded-md bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-300 px-4 py-2 text-sm font-medium">⚠️ MISMATCH — review the table (orphan profiles: ' + d.orphans + ')</div>';
+      resultEl.innerHTML = banner +
+        '<div class="mt-3 rounded-md border border-line bg-card p-4 overflow-auto">' +
+        '<table class="text-sm w-full"><thead class="text-muted text-xs uppercase tracking-wide">' +
+        '<tr><th class="text-left py-1 pr-4 font-medium">Table</th><th class="text-right py-1 pr-4 font-medium">Prod</th>' +
+        '<th class="text-right py-1 pr-4 font-medium">Branch</th><th class="text-left py-1 font-medium">OK</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table></div>';
+      resultEl.classList.remove('hidden');
+    }
+
+    // ---- Boot ----
+    setTab('home');
+    loadConfig().then((c) => {
+      if (!c.hasToken) {
+        setTab('settings');
+        setTokenStatus('No access token set yet — paste one to load branches.', false);
+      }
+      loadBranches();
+    }).catch(() => loadBranches());
+  </script>
+</body>
+</html>
