@@ -1,2 +1,7 @@
 .env
 *.sql
+
+# Build artifacts
+/dist/
+node_modules/
+packaging/app.ico

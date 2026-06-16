@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # One-time copy of production data -> a Supabase preview branch.
-#   Prod default : aeoudlrtucsgwralbgxl (scandi-oms)
+#   Prod default : <your-prod-project-ref>
 #
 # Scope: public schema (all tables) + auth.users/auth.identities (for real logins).
 # Storage file bytes are NOT copied. Preview branches are ephemeral; re-run after a reset.

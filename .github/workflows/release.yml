@@ -1,0 +1,80 @@
+name: Build & Release installer
+
+# Auto-builds the self-contained Windows installer and publishes a GitHub Release.
+# Trigger by pushing a version tag (e.g. `git tag v1.0.0 && git push --tags`),
+# or run manually from the Actions tab.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: write   # needed to create the release
+
+env:
+  # Modern PostgreSQL client tools to bundle (must be >= the Supabase server major version).
+  PG_BINARIES_URL: https://get.enterprisedb.com/postgresql/postgresql-17.10-1-windows-x64-binaries.zip
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $v = $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            $v = '${{ github.event.inputs.version }}'
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=v$v"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version $v"
+
+      - name: Download PostgreSQL client tools
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:PG_BINARIES_URL -OutFile pg.zip
+          Expand-Archive -Path pg.zip -DestinationPath pg -Force
+          if (-not (Test-Path 'pg\pgsql\bin\pg_dump.exe')) { throw 'pg_dump.exe not found after extracting PostgreSQL binaries' }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $node  = (Get-Command node).Source
+          $pgbin = Join-Path $PWD 'pg\pgsql\bin'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1 `
+            -Version ${{ steps.ver.outputs.version }} -NodeExe $node -PgBin $pgbin
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProdBranchSync-Setup-${{ steps.ver.outputs.version }}
+          path: dist/ProdBranchSync-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Prod Branch Sync ${{ steps.ver.outputs.version }}
+          files: dist/ProdBranchSync-Setup-*.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true

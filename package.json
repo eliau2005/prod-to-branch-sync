@@ -1,0 +1,19 @@
+{
+  "name": "prod-branch-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local UI to copy production Supabase data into a preview branch.",
+  "type": "module",
+  "bin": {
+    "prod-branch-sync": "launcher.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "app": "node launcher.mjs",
+    "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "eliau2005"
+}
