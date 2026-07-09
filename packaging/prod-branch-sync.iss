@@ -3,7 +3,7 @@
 
 #define AppName "Prod Branch Sync"
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 #define AppPublisher "eliau2005"
 #ifndef SourceDir

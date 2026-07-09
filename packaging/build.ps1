@@ -14,7 +14,7 @@
 param(
   [string]$NodeExe,
   [string]$PgBin,
-  [string]$Version = '1.0.0',
+  [string]$Version = '1.0.1',
   [switch]$StageOnly
 )
 $ErrorActionPreference = 'Stop'

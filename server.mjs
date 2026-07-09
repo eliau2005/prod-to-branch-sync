@@ -98,9 +98,9 @@ function pgEnv(conn) {
 }
 const bin = (name) => (PG_BIN ? path.join(PG_BIN, name) : name);
 
-// Build a branch's session-pooler connection by reusing prod's pooler host + region.
-function branchConn(branchRef, password) {
-  return { host: PROD.host, port: PROD.port, user: `postgres.${branchRef}`, password, database: 'postgres' };
+// Build a branch's session-pooler connection using its pooler host (falling back to prod's pooler host).
+function branchConn(branchRef, password, poolerHost = null) {
+  return { host: poolerHost || PROD.host, port: PROD.port, user: `postgres.${branchRef}`, password, database: 'postgres' };
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +231,21 @@ async function handleSync(branchRef, sse) {
     log(`Branch config keys: ${Object.keys(cfg || {}).join(', ')}`, true);
     throw new Error('Could not find the branch DB password in the Management API response.');
   }
-  const BRANCH = branchConn(match.project_ref, password);
+
+  let poolerHost = null;
+  try {
+    const poolers = await mgmt(`/v1/projects/${match.project_ref}/config/database/pooler`);
+    if (Array.isArray(poolers) && poolers.length > 0 && poolers[0].db_host) {
+      poolerHost = poolers[0].db_host;
+    }
+  } catch {
+    /* fallback to PROD.host if pooler lookup fails */
+  }
+
+  const BRANCH = branchConn(match.project_ref, password, poolerHost);
+  if (poolerHost && poolerHost !== PROD.host) {
+    log(`Branch pooler host: ${poolerHost}`);
+  }
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'p2b-'));
   const publicFile = path.join(work, 'public_data.sql');
