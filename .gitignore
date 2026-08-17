@@ -1,5 +1,9 @@
-.env
+# `.env*`, not `.env`: a backup like `.env.bak-pr204` holds the same production
+# credentials as the real thing and was NOT matched by the bare name, leaving it
+# untracked-but-committable in a repo with a public remote.
+.env*
 *.sql
+!post-load.sql
 
 # Build artifacts
 /dist/
