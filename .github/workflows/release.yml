@@ -1,6 +1,7 @@
-name: Build & Release installer
+name: Build & Release installers
 
-# Auto-builds the self-contained Windows installer and publishes a GitHub Release.
+# Auto-builds the self-contained Windows installer (web UI in a Chrome app window) and
+# the native Ubuntu .deb (GTK4/libadwaita), then publishes both to one GitHub Release.
 # Trigger by pushing a version tag (e.g. `git tag v1.0.0 && git push --tags`),
 # or run manually from the Actions tab.
 
@@ -22,7 +23,7 @@ env:
   PG_BINARIES_URL: https://get.enterprisedb.com/postgresql/postgresql-17.10-1-windows-x64-binaries.zip
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,11 +71,60 @@ jobs:
           path: dist/ProdBranchSync-Setup-*.exe
           if-no-files-found: error
 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node only runs test/parity.py's reference side; the .deb itself has no Node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check the Node server and the Python app
+        run: |
+          node --check server.mjs && node --check launcher.mjs
+          python3 -m py_compile linux/prod_branch_sync/*.py
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build .deb
+        run: bash packaging/build-deb.sh --version ${{ steps.ver.outputs.version }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-branch-sync-deb-${{ steps.ver.outputs.version }}
+          path: dist/prod-branch-sync_*.deb
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: ver
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: Prod Branch Sync ${{ steps.ver.outputs.version }}
-          files: dist/ProdBranchSync-Setup-*.exe
+          files: |
+            out/ProdBranchSync-Setup-*.exe
+            out/prod-branch-sync_*.deb
           generate_release_notes: true
           fail_on_unmatched_files: true

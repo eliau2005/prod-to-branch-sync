@@ -17,8 +17,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  RESTORE_SQL, PROD_COLS_SQL, BRANCH_STRICT_COLS_SQL, TYPED_COLS_SQL, COUNT_SQL, ORPHAN_SQL,
+  diffSchemaDrift, diffDroppedColumns, driftRelaxSql, driftTightenSql, droppedReaddSql, droppedRedropSql,
+  parseCounts,
+} from './lib/sync-sql.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Where .env (and an optional user post-load.sql) live. Defaults to this folder; the
+// launcher points it at a per-user dir when the app is installed read-only (e.g. /opt).
+const CONFIG_DIR = process.env.P2B_CONFIG_DIR || __dirname;
 const HOST = '127.0.0.1';
 const MGMT = 'https://api.supabase.com';
 
@@ -40,7 +48,7 @@ function loadEnv(file) {
     if (!(key in process.env)) process.env[key] = val;
   }
 }
-loadEnv(path.join(__dirname, '.env'));
+loadEnv(path.join(CONFIG_DIR, '.env'));
 
 const PORT = Number(process.env.PORT) || 8787;
 let TOKEN = process.env.SUPABASE_ACCESS_TOKEN || '';
@@ -49,7 +57,8 @@ let PG_BIN = process.env.PG_BIN || '';
 
 // Persist a single KEY='value' into .env (replacing the active line, or appending).
 function persistEnvVar(key, value) {
-  const file = path.join(__dirname, '.env');
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  const file = path.join(CONFIG_DIR, '.env');
   const lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];
   const re = new RegExp('^\\s*' + key + '\\s*=');
   let found = false;
@@ -61,7 +70,7 @@ function persistEnvVar(key, value) {
     }
   }
   if (!found) lines.push(`${key}='${value}'`);
-  fs.writeFileSync(file, lines.join('\n'));
+  fs.writeFileSync(file, lines.join('\n'), { mode: 0o600 }); // holds prod creds
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +126,70 @@ async function mgmt(pathname) {
 const listBranches = () => mgmt(`/v1/projects/${PROD_REF}/branches`);
 const getBranch = (branchRef) => mgmt(`/v1/branches/${branchRef}`);
 
+// Production projects only: /v1/projects does not list preview-branch projects.
+const listProjects = async () => (await mgmt('/v1/projects')).map((p) => ({
+  ref: p.ref || p.id, name: p.name, region: p.region, status: p.status, organization: p.organization_slug || p.organization_id,
+})).sort((a, b) => a.name.localeCompare(b.name));
+
+// Session-pooler URL for a project. The Management API never returns the DB password,
+// so the caller supplies it; host and user come from the project's pooler config.
+async function projectSessionUrl(ref, password) {
+  if (!/^[a-z0-9]{20}$/.test(ref)) throw new Error('Invalid project ref.');
+  const poolers = await mgmt(`/v1/projects/${ref}/config/database/pooler`);
+  const p = (Array.isArray(poolers) ? poolers : []).find((x) => x.database_type === 'PRIMARY') || poolers?.[0];
+  if (!p?.db_host || !p?.db_user) throw new Error('Could not read the project\'s pooler settings from the Management API.');
+  // The API reports the transaction pooler (6543); session mode is port 5432 on the same host.
+  return `postgresql://${encodeURIComponent(p.db_user)}:${encodeURIComponent(password)}@${p.db_host}:5432/${p.db_name || 'postgres'}`;
+}
+
+// Parse + test-connect a production URL, then make it current and persist it.
+async function applyProdUrl(nextUrl) {
+  const poolerHint = 'Paste the full Session pooler string from Supabase → Connect '
+    + '(postgresql://postgres.<ref>:<password>@aws-…pooler.supabase.com:5432/postgres).';
+  if (!nextUrl) throw new Error('Connection URL is empty.');
+  if (!/^postgres(ql)?:\/\//i.test(nextUrl)) throw new Error(`That is not a connection URL. ${poolerHint}`);
+  let conn;
+  try { conn = parseConn(nextUrl); }
+  catch (e) { throw new Error(`Could not parse the connection URL. ${e.message || e}`); }
+  if (/^db\.[a-z0-9]+\.supabase\.co$/i.test(conn.host)) {
+    throw new Error(`That is the direct connection (IPv6-only, no project ref in the user). ${poolerHint}`);
+  }
+  if (!conn.host || !conn.user || !conn.password) {
+    throw new Error('URL must include host, user, and password.');
+  }
+  const ref = conn.user.startsWith('postgres.') ? conn.user.slice('postgres.'.length) : '';
+  if (!ref) throw new Error('Could not derive a project ref — use the session-pooler URL (user "postgres.<ref>").');
+
+  // Read-only connection test (bounded so a bad host can't hang the request).
+  try {
+    await run(bin('psql'), ['-v', 'ON_ERROR_STOP=1', '-tA', '-c', 'select 1'],
+      { env: { ...pgEnv(conn), PGCONNECT_TIMEOUT: '10' }, capture: true });
+  } catch (e) {
+    if (/password authentication failed/i.test(e.message)) {
+      throw new Error('Wrong database password. Reset it in the dashboard under Database → Settings if you don\'t have it.');
+    }
+    throw e;
+  }
+
+  PROD = conn;
+  PROD_REF = ref;
+  PROD_DB_URL = nextUrl;
+  process.env.PROD_DB_URL = nextUrl;
+  persistEnvVar('PROD_DB_URL', nextUrl);
+  return { ok: true, prodRef: PROD_REF, host: conn.host, user: conn.user, database: conn.database };
+}
+
+// Open a Supabase dashboard page in the system's default browser rather than the
+// app window (which runs an isolated browser profile with no Supabase login).
+function openExternal(target) {
+  const u = new URL(target);
+  if (u.protocol !== 'https:' || u.hostname !== 'supabase.com') throw new Error('Only supabase.com links can be opened.');
+  const [cmd, args] = process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', u.href]]
+    : process.platform === 'darwin' ? ['open', [u.href]]
+    : ['xdg-open', [u.href]];
+  spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref();
+}
+
 // Pick the DB password out of a branch-config payload (field name confirmed at runtime).
 function pickPassword(cfg) {
   for (const k of ['db_pass', 'db_password', 'password']) {
@@ -167,183 +240,17 @@ function run(cmd, args, { env, stdin, onLine, capture } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// The restore SQL — identical logic to copy-prod-to-branch.sh
+// psql helpers (SQL text lives in lib/sync-sql.mjs)
 // ---------------------------------------------------------------------------
-const RESTORE_SQL = `begin;
-set session_replication_role = replica;
-do $$
-declare r record;
-begin
-  for r in select tablename from pg_tables where schemaname = 'public' loop
-    execute format('truncate table public.%I cascade', r.tablename);
-  end loop;
-  truncate table auth.users cascade;
-end $$;
-\\i :relax_file
-\\i :readd_file
-\\i :auth_file
-\\i :public_file
-\\i :post_load_file
-\\i :redrop_file
-\\i :tighten_file
-set session_replication_role = default;
-commit;
-`;
-
-// ---------------------------------------------------------------------------
-// Schema drift shim.
-//
-// A branch is schema-AHEAD of prod: its migrations may add a NOT NULL column
-// (no default) to a table prod already has. Prod's data-only dump then COPYs
-// without that column, and replica mode keeps any NULL-resolving trigger off,
-// so the load dies on the NOT NULL constraint (e.g. 0112's price_lists.currency).
-//
-// Fix, all inside the one restore transaction:
-//   relax_file   — DROP NOT NULL on each drifted column before the load
-//   post-load.sql — optional idempotent backfills maintained next to this tool
-//   tighten_file — re-add NOT NULL per column; a column that still holds NULLs
-//                  is left nullable with a loud WARNING instead of failing the sync
-//
-// Only columns on tables that EXIST in prod matter: a branch-new table is
-// restored empty, so its constraints are trivially satisfied. Identity and
-// generated columns self-populate under COPY and are skipped too.
-//
-// ── The other direction: a column the branch has DROPPED ────────────────────
-//
-// The case above is "the branch has a column prod lacks". The symmetric one is
-// "prod has a column the branch has dropped", and it fails harder and earlier:
-// `pg_dump --data-only` emits an explicit column list, so
-// `COPY public.t (id, gone, ...)` is rejected on the STATEMENT, before a single
-// row is read. An empty table fails exactly as loudly as a full one.
-//
-// This is what a rename-by-migration looks like from here — scandi-oms #339
-// replaced `conversation_proposals.kind` with `operation`, and the sync died on
-// a table holding zero rows in prod.
-//
-// Fix, mirroring the one above and inside the same transaction:
-//   readd_file  — add each prod-only column back to the branch, NULLABLE and
-//                 bare (no constraints, no default), purely so the COPY parses
-//   post-load.sql — may now read it, which is what makes a rename backfillable
-//   redrop_file — drop it again, restoring the branch's real schema, after
-//                 warning if it actually carried data that nothing preserved
-//
-// Nullable and bare matters: the branch dropped this column deliberately, and
-// re-adding it with prod's constraints could fail against branch-side data or,
-// worse, succeed and leave the branch schema quietly wrong.
-// ---------------------------------------------------------------------------
-const PROD_COLS_SQL =
-  `select table_name, column_name from information_schema.columns where table_schema = 'public'`;
-const BRANCH_STRICT_COLS_SQL =
-  `select table_name, column_name from information_schema.columns
-    where table_schema = 'public' and is_nullable = 'NO'
-      and column_default is null and is_identity = 'NO' and is_generated = 'NEVER'`;
-
-/**
- * Real columns with their rendered types, for either side.
- *
- * pg_catalog rather than information_schema because `format_type` round-trips
- * exactly what `add column` needs — arrays, enums, varchar(n), numeric(p,s) —
- * where information_schema's `data_type` flattens all of those to something
- * that would not rebuild the column.
- */
-const TYPED_COLS_SQL =
-  `select c.relname, a.attname, format_type(a.atttypid, a.atttypmod)
-     from pg_attribute a
-     join pg_class c on c.oid = a.attrelid
-     join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relkind = 'r'
-      and a.attnum > 0 and not a.attisdropped`;
-
 const psqlQuery = async (env, sql) =>
   (await run(bin('psql'), ['-v', 'ON_ERROR_STOP=1', '-tA', '-F', '|', '-c', sql], { env, capture: true }))
     .split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.split('|'));
 
-async function computeSchemaDrift(prodEnv, branchEnv) {
-  const prod = await psqlQuery(prodEnv, PROD_COLS_SQL);
-  const prodTables = new Set(prod.map(([t]) => t));
-  const prodCols = new Set(prod.map(([t, c]) => `${t}|${c}`));
-  const strict = await psqlQuery(branchEnv, BRANCH_STRICT_COLS_SQL);
-  return strict.filter(([t, c]) => prodTables.has(t) && !prodCols.has(`${t}|${c}`));
-}
+const computeSchemaDrift = async (prodEnv, branchEnv) =>
+  diffSchemaDrift(await psqlQuery(prodEnv, PROD_COLS_SQL), await psqlQuery(branchEnv, BRANCH_STRICT_COLS_SQL));
 
-/**
- * Columns prod still has that the branch has dropped, as [table, column, type].
- *
- * Scoped to tables BOTH sides have: a table only prod has is not dumped into a
- * branch that lacks it in the first place, and a branch-only table has no prod
- * COPY to reject.
- */
-async function computeDroppedColumns(prodEnv, branchEnv) {
-  const prod = await psqlQuery(prodEnv, TYPED_COLS_SQL);
-  const branch = await psqlQuery(branchEnv, TYPED_COLS_SQL);
-  const branchTables = new Set(branch.map(([t]) => t));
-  const branchCols = new Set(branch.map(([t, c]) => `${t}|${c}`));
-  return prod.filter(([t, c]) => branchTables.has(t) && !branchCols.has(`${t}|${c}`));
-}
-
-const qi = (id) => '"' + id.replace(/"/g, '""') + '"';
-const ql = (s) => s.replace(/'/g, "''");
-/** A SQL string literal, for identifiers passed to `format()` at run time. */
-const qlit = (s) => "'" + ql(s) + "'";
-
-const driftRelaxSql = (drift) =>
-  drift.map(([t, c]) => `alter table public.${qi(t)} alter column ${qi(c)} drop not null;`).join('\n') + '\n';
-
-const driftTightenSql = (drift) =>
-  drift.map(([t, c]) => `do $drift$
-begin
-  begin
-    alter table public.${qi(t)} alter column ${qi(c)} set not null;
-  exception when others then
-    raise warning 'schema-drift: public.${ql(t)}.${ql(c)} left NULLABLE on the branch (%) — add an idempotent backfill for it to post-load.sql and re-run the sync.', sqlerrm;
-  end;
-end $drift$;`).join('\n') + '\n';
-
-/** Add each prod-only column back, nullable and bare, so the COPY parses. */
-const droppedReaddSql = (dropped) =>
-  dropped.map(([t, c, ty]) => `alter table public.${qi(t)} add column if not exists ${qi(c)} ${ty};`).join('\n') + '\n';
-
-/**
- * Drop them again — but say so first if they carried anything.
- *
- * Silence here would be the dangerous outcome: a column dropped by a migration
- * that prod still fills is exactly the shape of a rename, and a rename whose
- * backfill nobody wrote leaves the branch quietly missing data it looks like it
- * has. So the warning fires on evidence (rows actually present) rather than on
- * the mere existence of the drift, which would cry wolf on every empty table.
- */
-const droppedRedropSql = (dropped) =>
-  dropped.map(([t, c]) => `do $dropped$
-declare n bigint;
-begin
-  execute format('select count(*) from public.%I where %I is not null', ${qlit(t)}, ${qlit(c)}) into n;
-  if n > 0 then
-    raise warning 'schema-drift: % prod rows carried public.${ql(t)}.${ql(c)}, which this branch has DROPPED — that data is not in the branch. If the migration renamed it, add an idempotent backfill to post-load.sql and re-run the sync.', n;
-  end if;
-  alter table public.${qi(t)} drop column if exists ${qi(c)};
-end $dropped$;`).join('\n') + '\n';
-
-const COUNT_SQL = `select 'companies' t, count(*) n from public.companies
-union all select 'orders', count(*) from public.orders
-union all select 'price_list_items', count(*) from public.price_list_items
-union all select 'profiles', count(*) from public.profiles
-union all select 'auth.users', count(*) from auth.users
-order by t;`;
-
-const ORPHAN_SQL =
-  `select count(*) from public.profiles p left join auth.users u on u.id = p.id where u.id is null;`;
-
-// Parse `t|n` rows from psql -tA output into { table: count }
-function parseCounts(raw) {
-  const m = {};
-  for (const line of raw.split(/\r?\n/)) {
-    const s = line.trim();
-    if (!s) continue;
-    const [t, n] = s.split('|');
-    if (t != null && n != null) m[t] = Number(n);
-  }
-  return m;
-}
+const computeDroppedColumns = async (prodEnv, branchEnv) =>
+  diffDroppedColumns(await psqlQuery(prodEnv, TYPED_COLS_SQL), await psqlQuery(branchEnv, TYPED_COLS_SQL));
 
 // ---------------------------------------------------------------------------
 // SSE sync handler
@@ -430,8 +337,8 @@ async function handleSync(branchRef, sse) {
     fs.writeFileSync(tightenFile, driftTightenSql(drift));
     fs.writeFileSync(readdFile, droppedReaddSql(dropped));
     fs.writeFileSync(redropFile, droppedRedropSql(dropped));
-    let postLoadFile = path.join(__dirname, 'post-load.sql');
-    if (fs.existsSync(postLoadFile)) {
+    let postLoadFile = [CONFIG_DIR, __dirname].map((d) => path.join(d, 'post-load.sql')).find((f) => fs.existsSync(f));
+    if (postLoadFile) {
       log('      post-load.sql found — its backfills run after the data load.');
     } else {
       postLoadFile = path.join(work, 'post-load-empty.sql');
@@ -478,7 +385,7 @@ async function handleSync(branchRef, sse) {
 function configError() {
   const problems = [];
   if (!TOKEN || TOKEN === 'sbp_REPLACE_ME') problems.push('SUPABASE_ACCESS_TOKEN is not set in .env');
-  if (!PROD_DB_URL) problems.push('PROD_DB_URL is not set in .env');
+  if (!PROD_DB_URL) problems.push('No production project selected — choose one in Settings');
   else if (!PROD) problems.push('PROD_DB_URL could not be parsed');
   if (PROD && !PROD_REF) problems.push('Could not derive prod project ref (set SUPABASE_PROJECT_REF in .env)');
   return problems;
@@ -504,6 +411,7 @@ const server = http.createServer(async (req, res) => {
       prodUser: PROD ? PROD.user : '',
       prodDatabase: PROD ? PROD.database : '',
       pgBin: PG_BIN,
+      platform: process.platform,
       port: PORT,
       problems: configError(),
     }));
@@ -531,41 +439,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Repoint the tool at a different production DB: parse + test-connect, then persist to .env.
-  if (url.pathname === '/api/prod-url' && req.method === 'POST') {
+  // Small JSON POST endpoints: body -> handler -> JSON (400 with { error } on failure).
+  const postJson = (handler) => {
     let body = '';
     req.on('data', (c) => { body += c; if (body.length > 10000) req.destroy(); });
     req.on('end', async () => {
       try {
-        const nextUrl = String((JSON.parse(body || '{}').url || '')).trim();
-        if (!nextUrl) throw new Error('Connection URL is empty.');
-        let conn;
-        try { conn = parseConn(nextUrl); }
-        catch (e) { throw new Error(`Could not parse the connection URL. ${e.message || e}`); }
-        if (!conn.host || !conn.user || !conn.password) {
-          throw new Error('URL must include host, user, and password.');
-        }
-        const ref = conn.user.startsWith('postgres.') ? conn.user.slice('postgres.'.length) : '';
-        if (!ref) throw new Error('Could not derive a project ref — use the session-pooler URL (user "postgres.<ref>").');
-
-        // Read-only connection test (bounded so a bad host can't hang the request).
-        await run(bin('psql'), ['-v', 'ON_ERROR_STOP=1', '-tA', '-c', 'select 1'],
-          { env: { ...pgEnv(conn), PGCONNECT_TIMEOUT: '10' }, capture: true });
-
-        PROD = conn;
-        PROD_REF = ref;
-        PROD_DB_URL = nextUrl;
-        process.env.PROD_DB_URL = nextUrl;
-        persistEnvVar('PROD_DB_URL', nextUrl);
-
+        const result = await handler(JSON.parse(body || '{}'));
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, prodRef: PROD_REF, host: conn.host, user: conn.user, database: conn.database }));
+        res.end(JSON.stringify(result));
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: String(e.message || e) }));
       }
     });
-    return;
+  };
+
+  // Repoint the tool at a different production DB: parse + test-connect, then persist to .env.
+  if (url.pathname === '/api/prod-url' && req.method === 'POST') {
+    return postJson((b) => applyProdUrl(String(b.url || '').trim()));
+  }
+
+  // Same, but from a project picked in the list plus its DB password.
+  if (url.pathname === '/api/prod-project' && req.method === 'POST') {
+    return postJson(async (b) => {
+      const password = String(b.password || '');
+      if (!password) throw new Error('Enter the project\'s database password.');
+      return applyProdUrl(await projectSessionUrl(String(b.ref || ''), password));
+    });
+  }
+
+  if (url.pathname === '/api/open-external' && req.method === 'POST') {
+    return postJson((b) => { openExternal(String(b.url || '')); return { ok: true }; });
+  }
+
+  if (url.pathname === '/api/projects') {
+    res.setHeader('Content-Type', 'application/json');
+    if (!TOKEN || TOKEN === 'sbp_REPLACE_ME') { res.writeHead(400); return res.end(JSON.stringify({ error: 'Set an access token first.' })); }
+    try {
+      res.writeHead(200);
+      return res.end(JSON.stringify({ projects: await listProjects(), current: PROD_REF }));
+    } catch (e) {
+      res.writeHead(502);
+      return res.end(JSON.stringify({ error: String(e.message || e) }));
+    }
   }
 
   // Set/replace the Supabase access token from the UI: validate it, then persist to .env.

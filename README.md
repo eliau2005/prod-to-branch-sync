@@ -71,14 +71,41 @@ Branches are **ephemeral** — re-run after any branch reset (new push / rebase 
 ## Requirements
 
 - Node 18+ (tested on v22) — for the web UI.
-- PostgreSQL client tools (`pg_dump`, `psql`) on `PATH`. If they aren't, set `PG_BIN` in `.env`
-  to the Postgres `bin` dir (e.g. `C:\Program Files\PostgreSQL\18\bin`).
-- `bash` (Git Bash) — only for the CLI fallback script.
+- PostgreSQL client tools (`pg_dump`, `psql`) **17 or newer** (≥ the Supabase server version) on
+  `PATH`. If they aren't, set `PG_BIN` in `.env` to the Postgres `bin` dir (e.g.
+  `C:\Program Files\PostgreSQL\18\bin`, or `/usr/lib/postgresql/18/bin` on Ubuntu).
+- `bash` (Git Bash on Windows) — only for the CLI fallback script.
+
+### Ubuntu — native app
+
+On Ubuntu the tool is a **native GTK4 / libadwaita app** (Python, `linux/prod_branch_sync/`), not
+the web UI. It is styled like the Supabase dashboard (`theme.py`: same palette tokens as
+`public/index.html`, dark by default, light/dark toggle in the top bar, Inter font via `fonts-inter`). Install the `.deb` from the GitHub Release, or build it with `npm run build:deb`:
+
+```bash
+sudo apt install ./prod-branch-sync_<version>_all.deb
+```
+
+It pulls PyGObject, GTK 4, libadwaita and the PostgreSQL client from the Ubuntu archive, and
+adds **Prod Branch Sync** to the app menu (plus a `prod-branch-sync` command). Settings live in
+`~/.config/prod-branch-sync/.env`. Put a `post-load.sql` there too if you need one.
+
+Needs Ubuntu 24.04+ (libadwaita ≥ 1.5). Ubuntu 24.04 only ships `postgresql-client-16`, which
+refuses to dump a 17 server, so add the [PGDG apt repo](https://www.postgresql.org/download/linux/ubuntu/)
+first there. 25.04+ has client 17/18 in the archive.
+
+Run it from a checkout without installing: `cd linux && python3 -m prod_branch_sync`.
+
+The sync SQL exists twice, `lib/sync-sql.mjs` (Node) and `linux/prod_branch_sync/syncsql.py`.
+`python3 test/parity.py` fails if they ever emit different SQL; the `.deb` build and CI run it.
 
 ## Setup (`.env`)
 
 - `PROD_DB_URL` — prod **session-mode** pooler string (port 5432). Used for prod creds, the
-  pooler host, and the prod project ref.
+  pooler host, and the prod project ref. You normally don't type it: in **Settings**, pick the
+  production project from your account (preview branches aren't listed), enter its database
+  password, and the URL is built from the project's pooler config and tested. Pasting a URL by hand
+  is still available under *Enter a connection URL manually*.
 - `SUPABASE_ACCESS_TOKEN` — create at <https://supabase.com/dashboard/account/tokens>. The web
   UI uses it to list branches and fetch each branch's DB password automatically.
 - optional `PG_BIN`, `PORT` (default 8787), `SUPABASE_PROJECT_REF` (only if it can't be derived
@@ -105,8 +132,13 @@ bash copy-prod-to-branch.sh
 
 | File | Purpose |
 |---|---|
-| `server.mjs` | Zero-dependency Node web server (UI + Management API + dump/restore). |
+| `server.mjs` | Zero-dependency Node web server (UI + Management API + dump/restore). Windows/macOS. |
+| `lib/sync-sql.mjs` | Restore script, schema-drift shim and verification SQL (pure functions). |
+| `linux/prod_branch_sync/` | Native Ubuntu app: `app.py` (GTK4/libadwaita), `engine.py`, `syncsql.py`. |
+| `test/parity.py` | Fails if the Python SQL port drifts from `lib/sync-sql.mjs`. |
 | `public/index.html` | The single-page UI (Tailwind via CDN). |
 | `copy-prod-to-branch.sh` | CLI fallback; same restore logic, manual branch string. |
+| `launcher.mjs` | Desktop entry point: starts the server, opens a browser app window, stops on close. |
+| `packaging/` | Windows installer (`build.ps1`) and Ubuntu `.deb` (`build-deb.sh`) builds. |
 | `post-load.sql` | Optional idempotent backfills for drifted columns in either direction (see shim above). |
 | `.env` | Secrets (gitignored — `post-load.sql` is the one un-ignored `.sql`). |

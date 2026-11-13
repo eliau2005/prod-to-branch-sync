@@ -1,4 +1,4 @@
-# Packaging — Windows installer
+# Packaging — Windows installer & Ubuntu package
 
 Builds a **fully self-contained** Windows installer (`.exe`) for the prod → branch
 sync tool. The installer bundles:
@@ -43,9 +43,30 @@ The script:
 
 ## First run
 
-The app starts with no credentials. Open the **Settings** tab to set the Supabase
-access token and (in the Danger Zone) the production connection URL. The bundled
+The app starts with no credentials. Open the **Settings** tab, set the Supabase
+access token (**Create one ↗** opens your default browser, where you're signed in), then
+pick the production project and enter its database password. A manual connection-URL
+field is still there as a fallback. The bundled
 PostgreSQL tools are used automatically — no `PG_BIN` setup needed.
+
+## Ubuntu / Debian (.deb)
+
+```bash
+npm run build:deb                       # or: bash packaging/build-deb.sh [--version 1.2.0]
+sudo apt install ./dist/prod-branch-sync_<version>_all.deb
+```
+
+The Ubuntu build is the **native GTK4 / libadwaita app** in `linux/prod_branch_sync/` — no Node,
+no browser. The package is `Architecture: all` (~20 KB) and depends on Ubuntu's own
+`python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1 (>= 1.5)` and `postgresql-client-17|18|19`.
+The build runs `test/parity.py` first, so it needs `node` to compare against `lib/sync-sql.mjs`.
+
+Installs the app to `/usr/lib/prod-branch-sync/`, the `/usr/bin/prod-branch-sync` launcher, a
+`.desktop` entry named after the app ID (`io.github.eliau2005.ProdBranchSync`) and an SVG icon.
+Per-user config: `~/.config/prod-branch-sync/` (`.env`, optional `post-load.sql`).
+
+The release workflow builds the `.deb` on `ubuntu-latest` alongside the Windows installer and
+attaches both to the GitHub Release.
 
 ## Files
 
@@ -53,5 +74,7 @@ PostgreSQL tools are used automatically — no `PG_BIN` setup needed.
 |------|------|
 | `prod-branch-sync.iss` | Inno Setup installer definition |
 | `build.ps1` | Stages the app, makes the icon, compiles the installer |
-| `../launcher.mjs` | Starts the server, opens the Chrome app window, tracks its close |
+| `../launcher.mjs` | Starts the server, opens the browser app window (Windows/Linux/macOS), tracks its close |
+| `build-deb.sh` | Stages the app and builds the Ubuntu/Debian `.deb` |
+| `linux/` | `.deb` extras: `/usr/bin` launcher, `.desktop` entry, SVG icon |
 | `../launch.vbs` | Runs the launcher with no console window (shortcut target) |

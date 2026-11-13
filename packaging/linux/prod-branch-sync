@@ -1,0 +1,8 @@
+#!/usr/bin/python3
+"""Prod Branch Sync: GTK4/libadwaita app (sources in /usr/lib/prod-branch-sync)."""
+import sys
+
+sys.path.insert(0, "/usr/lib/prod-branch-sync")
+from prod_branch_sync.app import main  # noqa: E402
+
+sys.exit(main())

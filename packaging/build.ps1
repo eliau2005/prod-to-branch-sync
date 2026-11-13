@@ -51,6 +51,7 @@ foreach ($f in @('server.mjs','launcher.mjs','launch.vbs','package.json','README
   if (Test-Path $src) { Copy-Item $src -Destination $appOut }
 }
 Copy-Item (Join-Path $root 'public') -Destination $appOut -Recurse
+Copy-Item (Join-Path $root 'lib') -Destination $appOut -Recurse
 
 Info "Bundling Node runtime…"
 Copy-Item $NodeExe -Destination (Join-Path $appOut 'node.exe')

@@ -9,3 +9,4 @@
 /dist/
 node_modules/
 packaging/app.ico
+__pycache__/

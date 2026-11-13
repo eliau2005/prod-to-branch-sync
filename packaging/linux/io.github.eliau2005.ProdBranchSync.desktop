@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Prod Branch Sync
+Comment=Copy production Supabase data into a preview branch
+Exec=prod-branch-sync
+Icon=prod-branch-sync
+Terminal=false
+Categories=Development;Database;GTK;
+Keywords=supabase;postgres;branch;sync;database;
+StartupNotify=true

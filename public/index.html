@@ -154,7 +154,7 @@
       <section id="token-card" class="rounded-md border border-line bg-card p-5 mb-5">
         <div class="flex items-center justify-between">
           <label class="block text-sm font-medium text-fg">Supabase access token</label>
-          <a href="https://supabase.com/dashboard/account/tokens" target="_blank" class="text-xs text-brand hover:text-brand-hover hover:underline">Create one ↗</a>
+          <a href="https://supabase.com/dashboard/account/tokens" data-external class="text-xs text-brand hover:text-brand-hover hover:underline">Create one ↗</a>
         </div>
         <p class="text-xs text-muted mt-1">Account-wide token, used to list branches and fetch branch DB passwords.</p>
         <div class="flex flex-col sm:flex-row gap-3 mt-3">
@@ -170,7 +170,7 @@
         <label class="block text-sm font-medium text-fg">PostgreSQL client tools</label>
         <p class="text-xs text-muted mt-1">Directory containing <code class="text-fg/80">psql</code> / <code class="text-fg/80">pg_dump</code>. Leave blank to use the system <code class="text-fg/80">PATH</code>. Verified with <code class="text-fg/80">psql --version</code> before saving.</p>
         <div class="flex flex-col sm:flex-row gap-3 mt-3">
-          <input id="pg-bin" type="text" autocomplete="off" spellcheck="false" placeholder="(system PATH)  ·  e.g. C:\Program Files\PostgreSQL\16\bin"
+          <input id="pg-bin" type="text" autocomplete="off" spellcheck="false" placeholder="(system PATH)"
             class="flex-1 rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40" />
           <button id="pg-bin-save" class="rounded-md border border-line bg-input px-4 py-2 text-sm font-medium text-fg hover:border-line-h disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Save &amp; test</button>
         </div>
@@ -186,15 +186,34 @@
         <div class="p-5">
           <p class="text-xs text-muted mb-1">Current production target</p>
           <p id="prod-current" class="text-sm font-mono text-fg break-all">—</p>
-          <label class="block text-sm font-medium text-fg mt-4 mb-2">New production connection URL</label>
-          <input id="prod-url" type="text" autocomplete="off" spellcheck="false"
-            placeholder="postgresql://postgres.&lt;ref&gt;:&lt;password&gt;@&lt;pooler-host&gt;:5432/postgres"
-            class="w-full rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40" />
-          <p class="text-xs text-muted mt-1">Use the <b class="font-medium text-fg">session-pooler</b> URL (user <code class="text-fg/80">postgres.&lt;ref&gt;</code>). Tested read-only before saving.</p>
-          <div class="flex items-center gap-3 mt-3">
-            <button id="prod-save" class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Update production connection</button>
-            <p id="prod-status" class="hidden text-xs"></p>
+          <label for="project" class="block text-sm font-medium text-fg mt-4 mb-2">Production project</label>
+          <select id="project" class="w-full rounded-md bg-input border border-line px-3 py-2 text-sm text-fg focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40">
+            <option value="">Set an access token to list projects</option>
+          </select>
+          <p class="text-xs text-muted mt-1">Production projects on your account (preview branches are not listed).</p>
+          <div class="flex items-center justify-between mt-4 mb-2">
+            <label for="project-pw" class="block text-sm font-medium text-fg">Database password</label>
+            <a id="project-pw-reset" href="#" data-external class="hidden text-xs text-brand hover:text-brand-hover hover:underline">Forgot it? Reset in dashboard ↗</a>
           </div>
+          <input id="project-pw" type="password" autocomplete="off"
+            class="w-full rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40" />
+          <p class="text-xs text-muted mt-1">Supabase never returns it through the API. The session-pooler URL is built for you and tested read-only before saving.</p>
+          <div class="flex items-center gap-3 mt-3">
+            <button id="project-save" class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Use this project</button>
+            <p id="project-status" class="hidden text-xs"></p>
+          </div>
+
+          <details class="mt-5 border-t border-line pt-4 group">
+            <summary class="cursor-pointer text-sm text-muted hover:text-fg select-none">Enter a connection URL manually</summary>
+            <input id="prod-url" type="text" autocomplete="off" spellcheck="false"
+              placeholder="postgresql://postgres.&lt;ref&gt;:&lt;password&gt;@&lt;pooler-host&gt;:5432/postgres"
+              class="mt-3 w-full rounded-md bg-input border border-line px-3 py-2 text-sm text-fg font-mono placeholder:text-dim focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40" />
+            <p class="text-xs text-muted mt-1">Use the <b class="font-medium text-fg">session-pooler</b> URL (user <code class="text-fg/80">postgres.&lt;ref&gt;</code>). Tested read-only before saving.</p>
+            <div class="flex items-center gap-3 mt-3">
+              <button id="prod-save" class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Update production connection</button>
+              <p id="prod-status" class="hidden text-xs"></p>
+            </div>
+          </details>
         </div>
       </section>
     </section>
@@ -322,6 +341,7 @@
         problemsEl.classList.add('hidden');
         await loadConfig();
         await loadBranches();
+        await loadProjects();
       } catch (e) {
         setTokenStatus(String(e.message || e), false);
       } finally {
@@ -352,34 +372,87 @@
     });
 
     // ---- Settings: Danger Zone (repoint production) ----
-    function setProdStatus(msg, kind) {
-      prodStatus.textContent = msg;
-      prodStatus.className = 'text-xs ' + (kind === 'ok' ? 'text-brand' : kind === 'err' ? 'text-red-600 dark:text-red-400' : 'text-muted');
-      prodStatus.classList.remove('hidden');
+    // Both paths (project picker, manual URL) confirm with the same modal, then POST.
+    const projectSel = $('#project'), projectPw = $('#project-pw'), projectSaveBtn = $('#project-save'), projectStatus = $('#project-status');
+    const projectReset = $('#project-pw-reset');
+    let pendingProd = null;
+    function setStatusEl(el, base, msg, kind) {
+      el.textContent = msg;
+      el.className = base + (kind === 'ok' ? 'text-brand' : kind === 'err' ? 'text-red-600 dark:text-red-400' : 'text-muted');
+      el.classList.remove('hidden');
     }
-    prodSaveBtn.addEventListener('click', () => {
-      if (!prodUrlInput.value.trim()) { setProdStatus('Enter a connection URL first.', 'err'); return; }
-      prodModal.classList.remove('hidden');
-    });
-    $('#prod-cancel').addEventListener('click', () => prodModal.classList.add('hidden'));
-    $('#prod-confirm').addEventListener('click', async () => {
-      prodModal.classList.add('hidden');
-      const url = prodUrlInput.value.trim();
-      prodSaveBtn.disabled = true; setProdStatus('Testing connection…', 'info');
+    const setProdStatus = (msg, kind) => setStatusEl(prodStatus, 'text-xs ', msg, kind);
+    const setProjectStatus = (msg, kind) => setStatusEl(projectStatus, 'text-xs ', msg, kind);
+
+    async function loadProjects() {
       try {
-        const res = await fetch('/api/prod-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+        const res = await fetch('/api/projects');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || res.statusText);
-        setProdStatus('Updated ✓ — connection verified.', 'ok');
-        prodUrlInput.value = '';
+        projectSel.innerHTML = '';
+        projectSel.appendChild(new Option(data.projects.length ? '— select a project —' : 'No projects on this account', ''));
+        for (const p of data.projects) {
+          const o = new Option(p.name + '  ·  ' + p.ref + '  ·  ' + p.region + (p.status === 'ACTIVE_HEALTHY' ? '' : '  ·  ' + p.status), p.ref);
+          o.selected = p.ref === data.current;
+          projectSel.appendChild(o);
+        }
+      } catch (e) {
+        projectSel.innerHTML = '';
+        projectSel.appendChild(new Option(String(e.message || e), ''));
+      }
+      syncProjectReset();
+    }
+    function syncProjectReset() {
+      const ref = projectSel.value;
+      projectReset.classList.toggle('hidden', !ref);
+      projectReset.href = 'https://supabase.com/dashboard/project/' + ref + '/database/settings';
+    }
+    projectSel.addEventListener('change', syncProjectReset);
+
+    projectSaveBtn.addEventListener('click', () => {
+      if (!projectSel.value) { setProjectStatus('Choose a project first.', 'err'); return; }
+      if (!projectPw.value) { setProjectStatus('Enter the database password.', 'err'); return; }
+      pendingProd = { endpoint: '/api/prod-project', body: { ref: projectSel.value, password: projectPw.value }, btn: projectSaveBtn, status: setProjectStatus, input: projectPw };
+      prodModal.classList.remove('hidden');
+    });
+    projectPw.addEventListener('keydown', (e) => { if (e.key === 'Enter') projectSaveBtn.click(); });
+    prodSaveBtn.addEventListener('click', () => {
+      if (!prodUrlInput.value.trim()) { setProdStatus('Enter a connection URL first.', 'err'); return; }
+      pendingProd = { endpoint: '/api/prod-url', body: { url: prodUrlInput.value.trim() }, btn: prodSaveBtn, status: setProdStatus, input: prodUrlInput };
+      prodModal.classList.remove('hidden');
+    });
+    $('#prod-cancel').addEventListener('click', () => { prodModal.classList.add('hidden'); pendingProd = null; });
+    $('#prod-confirm').addEventListener('click', async () => {
+      prodModal.classList.add('hidden');
+      const p = pendingProd; pendingProd = null;
+      if (!p) return;
+      p.btn.disabled = true; p.status('Testing connection…', 'info');
+      try {
+        const res = await fetch(p.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p.body) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        p.status('Updated ✓ — connection verified (' + data.prodRef + ').', 'ok');
+        p.input.value = '';
         problemsEl.classList.add('hidden');
         await loadConfig();
         await loadBranches();
+        await loadProjects();
       } catch (e) {
-        setProdStatus(String(e.message || e), 'err');
+        p.status(String(e.message || e), 'err');
       } finally {
-        prodSaveBtn.disabled = false;
+        p.btn.disabled = false;
       }
+    });
+
+    // ---- External links: open in the system browser, not this app window ----
+    document.addEventListener('click', async (e) => {
+      const a = e.target.closest('a[data-external]');
+      if (!a) return;
+      e.preventDefault();
+      try {
+        const res = await fetch('/api/open-external', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: a.href }) });
+        if (!res.ok) throw new Error();
+      } catch { window.open(a.href, '_blank', 'noopener'); }
     });
 
     function logLine(msg, isErr) {
@@ -421,6 +494,7 @@
           ? c.prodUser + ' @ ' + c.prodHost + ' / ' + c.prodDatabase + (c.prodRef ? '  ·  ref ' + c.prodRef : '')
           : 'Not configured';
         pgBinInput.value = c.pgBin || '';
+        pgBinInput.placeholder = '(system PATH)  ·  e.g. ' + (c.platform === 'win32' ? 'C:\\Program Files\\PostgreSQL\\18\\bin' : '/usr/lib/postgresql/18/bin');
         const other = (c.problems || []).filter((p) => !/ACCESS_TOKEN/.test(p));
         if (other.length) showProblem('Setup needed: ' + other.join('; '));
         return c;
@@ -533,6 +607,7 @@
         setTokenStatus('No access token set yet — paste one to load branches.', false);
       }
       loadBranches();
+      if (c.hasToken) loadProjects();
     }).catch(() => loadBranches());
   </script>
 </body>
